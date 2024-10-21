@@ -1,0 +1,15 @@
+type Contract = record {
+  contract_json : text;
+  signatories : ContractSignatories;
+  created_at: nat64;
+};
+type ContractSignatories = record {
+  seller : record { principal; bool };
+  buyer : record { principal; bool };
+};
+service : {
+  create_contract : (text, principal, principal) -> (nat64);
+  get_contract : (nat64) -> (opt Contract) query;
+  is_signed : (nat64) -> (bool) query;
+  sign_contract : (nat64) -> ();
+}

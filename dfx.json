@@ -1,0 +1,17 @@
+{
+  "canisters": {
+    "icp-buyer-seller-contract-backend": {
+      "candid": "src/icp-buyer-seller-contract-backend/icp-buyer-seller-contract-backend.did",
+      "package": "icp-buyer-seller-contract-backend",
+      "type": "rust"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
