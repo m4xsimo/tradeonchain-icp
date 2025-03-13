@@ -1,147 +1,131 @@
-use candid::{Decode, Encode};
-use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
-use ic_stable_structures::storable::Bound;
-use ic_stable_structures::{Cell, DefaultMemoryImpl, StableBTreeMap, Storable};
-use std::borrow::Cow;
-use std::cell::RefCell;
+use alloy::primitives::Address;
+use ic_cdk::init;
+use repositories::{ApiError, Contract, Role, User, UserRepositoryImpl};
 use candid::{Principal, CandidType, Deserialize};
-//use std::{cell::RefCell, collections::BTreeMap};
+use services::{AccessControlServiceImpl, AccessControlService, ContractService, ContractServiceImpl, UserService, UserServiceImpl, WalletService, WalletServiceImpl};
+use repositories::{Uuid};
 
-type Memory = VirtualMemory<DefaultMemoryImpl>;
+mod repositories;
+mod services;
+mod system_api;
 
-thread_local! {
-    // The memory manager is used for simulating multiple memories. Given a `MemoryId` it can
-    // return a memory that can be used by stable structures.
-    static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
-        RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
+#[init]
+fn init() {
+    let calling_principal = ic_cdk::caller();
 
-    // Initialize a `StableBTreeMap` with `MemoryId(0)`.
-    static CONTRACTS: RefCell<StableBTreeMap<u64, Contract, Memory>> = RefCell::new(
-        StableBTreeMap::init(
-            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(0))),
-        )
-    );
-
-
-    // Initialize a `StableBTreeMap` with `MemoryId(0)`.
-    static NEXT_CONTRACT_ID: RefCell<Cell<u64, Memory>> = RefCell::new(
-        Cell::init(
-            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(1))), 1
-        ).unwrap()
-    );
+    //add principal of canister creator as admin
+    UserServiceImpl::default().create_user(calling_principal, User{role: Role::Admin}).unwrap();
 }
 
+#[ic_cdk::update]
+fn add_permission(principal: Principal, role: Role) -> Result<(), ApiError> {
+    let caller = ic_cdk::caller();
+    AccessControlServiceImpl::default().assert_principal_is_admin(&caller)?;
 
-/// A struct representing the signatories of a contract.
-/// bool flag represents if they have signed the contract
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct ContractSignatories {
-    buyer: (Principal, bool),
-    seller: (Principal, bool),
+    UserServiceImpl::default().create_user(principal, User{role})
 }
 
-/// A struct representing a contract.
-/// It contains the signatories and the contract json.
-/// The contract json is a json string representation of the contract computed offchain
-#[derive(Clone, Debug, CandidType, Deserialize)]
-struct Contract {
-    signatories: ContractSignatories,
-    contract_json: String,
-    created_at: u64
+#[ic_cdk::update]
+fn remove_permission(principal: Principal) -> Result<(), ApiError> {
+    let caller = ic_cdk::caller();
+    AccessControlServiceImpl::default().assert_principal_is_admin(&caller)?;
+
+    UserServiceImpl::default().remove_user(&principal)
 }
 
-impl Storable for Contract {
-    fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        Cow::Owned(Encode!(self).unwrap())
-    }
+#[ic_cdk::update]
+fn update_permission(principal: Principal, role: Role) -> Result<(), ApiError> {
+    let caller = ic_cdk::caller();
+    AccessControlServiceImpl::default().assert_principal_is_admin(&caller)?;
 
-    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
-        Decode!(bytes.as_ref(), Self).unwrap()
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
+    UserServiceImpl::default().update_user(principal, User{role})
 }
 
-impl Contract {
-    fn new(contract_json: String, buyer: Principal, seller: Principal) -> Self {
-        Self {
-            signatories: ContractSignatories {
-                buyer: (buyer, false),
-                seller: (seller, false),
-            },
-            contract_json,
-            created_at: ic_cdk::api::time()
-        }
-    }
-
-    fn is_signed(&self) -> bool {
-        self.signatories.buyer.1 && self.signatories.seller.1
-    }
+#[ic_cdk::query]
+fn get_users() -> Vec<(Principal, User)> {
+    UserServiceImpl::default().list_users()
 }
 
 /// Create a new unsigned contract in storage
 #[ic_cdk::update]
-fn create_contract(contract_json: String, buyer: Principal, seller: Principal) -> u64 {
-    //let caller = ic_cdk::caller();
-    let contract_id = next_contract_id();
-
-    let contract = Contract::new(contract_json, buyer, seller);
-    CONTRACTS.with(|contracts| {
-        contracts.borrow_mut().insert(
-            contract_id.clone(),
-            contract,
-        );
-    });
-
-    contract_id
+fn create_contract(contract_json: String, buyer: Principal, seller: Principal) -> Uuid {
+    ContractServiceImpl::default().create_contract(contract_json, buyer, seller)
 }
 
-/// Sign a contract
+// Sign a contract
 #[ic_cdk::update]
-async fn sign_contract(contract_id: u64) {
+async fn sign_contract(contract_id: String) -> Result<(), ApiError> {
     let caller = ic_cdk::caller();
 
-    CONTRACTS.with(|contracts| {
-        let mut c = contracts.borrow_mut();
-        if let Some(mut contract) = c.get(&contract_id) {
-            if caller == contract.signatories.buyer.0 {
-                contract.signatories.buyer.1 = true;
-            } else if caller == contract.signatories.seller.0 {
-                contract.signatories.seller.1 = true;
-            } else {
-                ic_cdk::trap("Error: buyer or seller not valid.")
-            }
-            c.insert(contract_id, contract);
-        }
-    });
-
+    ContractServiceImpl::default()
+    .with_wallet(WalletServiceImpl::new(true))
+    .sign_contract(contract_id, caller)
 }
 
 /// Query a contract by its ID
 #[ic_cdk::query]
-fn get_contract(contract_id: u64) -> Option<Contract> {
-    CONTRACTS.with(|contracts| contracts.borrow().get(&contract_id).clone())
+fn get_contract(contract_id: String) -> Option<Contract> {
+    ContractServiceImpl::default().get_contract(contract_id)
 }
 
 /// query signature status of a contract
 #[ic_cdk::query]
-fn is_signed(contract_id: u64) -> bool {
-    if let Some(contract) =  get_contract(contract_id) {
-        contract.is_signed()
-    } else {
-        ic_cdk::trap("Error: contract not found")
-    }
-}
-/// Get the next available Id for a creating a new contract and increment the ID counter
-/// contract IDs are generated sequentially
-/// Starting with 1 - cannot be zero
-fn next_contract_id() -> u64 {
-    NEXT_CONTRACT_ID.with(|counter| {
-        let mut c = counter.borrow_mut();
-        let new_count =c.get()+1;
-        c.set(new_count).unwrap();
-        new_count
-    })
+fn is_signed(contract_id: String) -> Result<bool, ApiError> {
+    ContractServiceImpl::default().is_signed(contract_id)
 }
 
-//ic_cdk::export_candid!();
+#[ic_cdk::update]
+async fn get_balance(address: String) -> Result<String, ApiError> {
+    WalletServiceImpl::new(true).get_balance(address).await
+}
+
+/// Get the Ethereum address of the backend canister.
+#[ic_cdk::update]
+async fn get_address() -> Result<String, ApiError> {
+    WalletServiceImpl::new(true).get_address().await
+}
+
+/// Request the balance of an ETH account.
+#[ic_cdk::update]
+async fn get_balance_usdc(address: Option<String>) -> Result<String, ApiError> {
+    WalletServiceImpl::new(true).get_balance_usdc(address).await
+}
+
+#[ic_cdk::update]
+async fn issue_payment(contract_id: String, seller_principal: Principal, address: String, amount: u64) -> Result<(), ApiError> {
+    let caller = ic_cdk::caller();
+    AccessControlServiceImpl::default().assert_principal_is_frontend(&caller)?;
+
+    let address = address.parse::<Address>().map_err(|e| ApiError::internal(e.to_string().as_str()))?;
+
+    ContractServiceImpl::default()
+    .with_wallet(WalletServiceImpl::new(true))
+    .issue_payment(contract_id, seller_principal, address, amount).await
+}
+
+// #[ic_cdk::update]
+// async fn _sign_contract(contract_id: Uuid) -> Result<(), ApiError> {
+//     let caller = ic_cdk::caller();
+//     AccessControlServiceImpl::default().assert_principal_is_admin(&caller)?;
+
+//     let contract_service = ContractServiceImpl::default().with_wallet(WalletServiceImpl::new(true));
+//     let contract = contract_service.get_contract(contract_id)
+//     .ok_or_else(|| ApiError::not_found("Contract not found"))?;
+
+//     contract_service.sign_contract(contract_id, contract.signatories.buyer.0)?;
+//     contract_service.sign_contract(contract_id, contract.signatories.seller.0)?;
+//     Ok(())
+// }
+
+// #[ic_cdk::update]
+// async fn transfer_usdc() -> Result<String, String> {
+//     //TODO add access control
+//     services::wallet_service::transfer_usdc().await
+// }
+
+#[ic_cdk::query]
+async fn get_principal() -> Principal {
+    ic_cdk::caller()
+}
+
+ic_cdk::export_candid!();

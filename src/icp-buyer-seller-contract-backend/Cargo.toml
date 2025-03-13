@@ -11,5 +11,15 @@ crate-type = ["cdylib"]
 [dependencies]
 candid = "0.10"
 ic-cdk = "0.13"
+ic-cdk-timers = "0.9.0"
 serde = "1.0"
 ic-stable-structures = "0.6"
+alloy = { git = "https://github.com/ic-alloy/ic-alloy.git", tag = "v0.3.5-icp.1", default-features = false, features = [  
+    "icp",
+    "sol-types",
+    "json",
+    "contract",]}
+getrandom = { version = "0.2.15", features = ["custom"] }
+uuid = { version = "1.6", features = ["serde"] }
+fastrand = "2"
+chrono = { version = "0.4", default-features = false, features = ["std"] }

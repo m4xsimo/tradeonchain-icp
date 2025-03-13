@@ -1,15 +1,32 @@
+type ApiError = record { code : nat16; message : text };
 type Contract = record {
   contract_json : text;
+  issued_payment : bool;
+  created_at : nat64;
   signatories : ContractSignatories;
-  created_at: nat64;
 };
 type ContractSignatories = record {
   seller : record { principal; bool };
   buyer : record { principal; bool };
 };
-service : {
-  create_contract : (text, principal, principal) -> (nat64);
-  get_contract : (nat64) -> (opt Contract) query;
-  is_signed : (nat64) -> (bool) query;
-  sign_contract : (nat64) -> ();
+type Result = variant { Ok; Err : ApiError };
+type Result_1 = variant { Ok : text; Err : ApiError };
+type Result_2 = variant { Ok : bool; Err : ApiError };
+type Role = variant { Admin; FrontendServer };
+type User = record { role : Role };
+service : () -> {
+  _sign_contract : (text) -> (Result);
+  add_permission : (principal, Role) -> (Result);
+  create_contract : (text, principal, principal) -> (text);
+  get_address : () -> (Result_1);
+  get_balance : (text) -> (Result_1);
+  get_balance_usdc : (opt text) -> (Result_1);
+  get_contract : (text) -> (opt Contract) query;
+  get_principal : () -> (principal) query;
+  get_users : () -> (vec record { principal; User }) query;
+  is_signed : (text) -> (Result_2) query;
+  issue_payment : (text, principal, text, nat64) -> (Result);
+  remove_permission : (principal) -> (Result);
+  sign_contract : (text) -> (Result);
+  update_permission : (principal, Role) -> (Result);
 }

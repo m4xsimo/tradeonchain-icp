@@ -1,0 +1,8 @@
+{
+  "type": "module",
+  "dependencies": {
+    "@dfinity/identity": "^2.3.0",
+    "@dfinity/agent": "^2.3.0",
+    "@dfinity/principal": "^2.3.0"
+  }
+}
